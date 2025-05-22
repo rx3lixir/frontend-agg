@@ -1,319 +1,158 @@
-"use client";
-
-import { createContext, useContext, useEffect, useMemo, useState } from "react";
-import { Session, User, AuthContextType } from "@/types/auth";
-import { useRouter } from "next/navigation";
+import React, { createContext, useContext, useEffect, useState } from "react";
+import { User, AuthContextType } from "@/types/auth";
 import { authApi } from "@/lib/api-client";
-import { toast } from "sonner";
-import { logDebug, logError, logInfo, logWarn } from "@/lib/logger";
+import { logDebug, logError, logInfo } from "@/lib/logger";
 
-// Контекст с начальными значениями
-const AuthContext = createContext<AuthContextType>({
-  user: null,
-  isAuthenticated: false,
-  isLoading: true,
-  login: async () => ({
-    success: false,
-    error: "Auth context not initialized",
-  }),
-  logout: async () => false,
-  refreshToken: async () => false,
-});
+const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
-export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
+export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
+  children,
+}) => {
   const [user, setUser] = useState<User | null>(null);
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
-  const router = useRouter();
+  const [accessTokenExpiresAt, setAccessTokenExpiresAt] = useState<Date | null>(
+    null,
+  );
 
-  // Слушатель для обработки событий истечения сессии
-  useEffect(() => {
-    const handleSessionExpired = (event: CustomEvent) => {
-      const reason = event.detail?.reason || "unknown";
-      logWarn(`Session expired event received: ${reason}`);
-
-      toast.error("Ваша сессия истекла. Пожалуйста, войдите снова.");
-
-      // Очищаем данные аутентификации перед перенаправлением
-      clearAuthData();
-
-      // Перенаправляем пользователя на страницу входа, если еще не перенаправлены
-      if (window.location.pathname !== "/auth/login") {
-        router.push("/auth/login?reason=session_expired");
-      }
-    };
-
-    window.addEventListener(
-      "auth:session-expired",
-      handleSessionExpired as EventListener,
-    );
-
-    return () => {
-      window.removeEventListener(
-        "auth:session-expired",
-        handleSessionExpired as EventListener,
-      );
-    };
-  }, [router]);
-
-  // Проверяем аутентификацию при загрузке страницы
-  useEffect(() => {
-    const initAuth = async () => {
-      setIsLoading(true);
-      logInfo("Initializing authentication state");
-
-      try {
-        // Проверяем наличие данных сессии в localStorage
-        const storedUser = localStorage.getItem("user");
-        const accessToken = localStorage.getItem("accessToken");
-        const refreshToken = localStorage.getItem("refreshToken");
-        const tokenExpiry = localStorage.getItem("tokenExpiry");
-        const sessionId = localStorage.getItem("sessionId");
-
-        logDebug("Auth data check", {
-          hasUser: !!storedUser,
-          hasAccessToken: !!accessToken,
-          hasRefreshToken: !!refreshToken,
-          hasTokenExpiry: !!tokenExpiry,
-          hasSessionId: !!sessionId,
-        });
-
-        if (!storedUser || !accessToken || !refreshToken || !sessionId) {
-          logInfo("No complete session data found, user not authenticated");
-          throw new Error("No session data found");
-        }
-
-        // Восстанавливаем пользователя из localStorage
-        const parsedUser = JSON.parse(storedUser);
-        setUser(parsedUser);
-        logInfo(`User restored from storage: ${parsedUser.email || "unknown"}`);
-
-        // Проверим валидность токена, при необходимости обновим
-        if (tokenExpiry) {
-          const expiryDate = new Date(parseInt(tokenExpiry));
-          const currentDate = new Date();
-          const timeUntilExpiry = expiryDate.getTime() - currentDate.getTime();
-
-          logDebug("Token expiry check", {
-            expiryDate: expiryDate.toISOString(),
-            currentDate: currentDate.toISOString(),
-            minutesUntilExpiry: Math.round(timeUntilExpiry / 60000),
-          });
-
-          // Если токен истек или истекает в ближайшие 5 минут
-          if (expiryDate <= currentDate || timeUntilExpiry < 300000) {
-            logInfo("Token expired or expiring soon, refreshing");
-            const refreshSuccess = await handleRefreshToken(refreshToken);
-
-            if (!refreshSuccess) {
-              logWarn("Token refresh failed during initialization");
-              throw new Error("Failed to refresh token");
-            }
-          }
-        }
-      } catch (error: any) {
-        logError("Failed to initialize auth", { error: error.message });
-
-        // Очищаем локальное хранилище, если что-то пошло не так
-        clearAuthData();
-      } finally {
-        setIsLoading(false);
-        logInfo("Auth initialization completed");
-      }
-    };
-
-    initAuth();
-  }, []);
-
-  // Сохраняем сессию пользователя в localStorage
-  const saveSession = (session: Session) => {
-    logDebug("Saving session data", {
-      userId: session.user.email,
-      expiresAt: new Date(session.access_token_expires_at).toISOString(),
-      sessionId: session.session_id,
-    });
-
-    localStorage.setItem("accessToken", session.access_token);
-    localStorage.setItem("refreshToken", session.refresh_token);
-    localStorage.setItem("user", JSON.stringify(session.user));
-    localStorage.setItem("sessionId", session.session_id);
-
-    // Сохраняем время истечения токена для проверки
-    const expiresAt = new Date(session.access_token_expires_at).getTime();
-    localStorage.setItem("tokenExpiry", expiresAt.toString());
-
-    logInfo("Session data saved successfully");
-  };
-
-  // Очищаем данные аутентификации
-  const clearAuthData = () => {
-    logInfo("Clearing authentication data");
-
-    localStorage.removeItem("accessToken");
-    localStorage.removeItem("refreshToken");
-    localStorage.removeItem("user");
-    localStorage.removeItem("tokenExpiry");
-    localStorage.removeItem("sessionId");
-    setUser(null);
-
-    logInfo("Authentication data cleared");
-  };
-
-  // Обрабатываем обновление токена
-  const handleRefreshToken = async (refreshTokenStr?: string) => {
+  // Функция для проверки текущего состояния аутентификации
+  const checkAuthStatus = async () => {
     try {
-      logInfo("Attempting to refresh token");
+      setIsLoading(true);
 
-      const token = refreshTokenStr || localStorage.getItem("refreshToken");
-      if (!token) {
-        logWarn("No refresh token available for refresh");
-        return false;
+      // ИСПРАВЛЕНИЕ: Делаем запрос к защищенному эндпоинту для проверки токена
+      // Если токен валиден, сервер вернет данные пользователя
+      // Если нет - получим 401 и сработает перехватчик
+      const response = await fetch(
+        "http://localhost:8080/auth/api/v1/auth/me",
+        {
+          credentials: "include", // Включаем cookies
+        },
+      );
+
+      if (response.ok) {
+        const userData = await response.json();
+        setUser(userData.user);
+        setIsAuthenticated(true);
+        setAccessTokenExpiresAt(new Date(userData.access_token_expires_at));
+        logInfo("User authenticated from cookies", {
+          email: userData.user.email,
+        });
+      } else {
+        setUser(null);
+        setIsAuthenticated(false);
+        setAccessTokenExpiresAt(null);
+        logDebug("User not authenticated");
       }
-
-      const response = await authApi.refreshToken({ refresh_token: token });
-      logInfo("Token refreshed successfully");
-
-      // Обновляем только токен доступа, refresh токен остается прежним
-      localStorage.setItem("accessToken", response.data.access_token);
-
-      // Обновляем время истечения токена
-      const expiresAt = new Date(
-        response.data.access_token_expires_at,
-      ).getTime();
-
-      localStorage.setItem("tokenExpiry", expiresAt.toString());
-
-      logDebug("Updated token expiry", {
-        newExpiry: new Date(expiresAt).toISOString(),
-      });
-
-      return true;
-    } catch (error: any) {
-      logError("Failed to refresh token", {
-        error: error.message,
-        status: error.response?.status,
-        details: error.response?.data,
-      });
-
-      // Если ошибка 401 или 403, значит refresh token недействителен
-      if (error.response?.status === 401 || error.response?.status === 403) {
-        logWarn("Refresh token is invalid or expired, clearing auth data");
-        clearAuthData();
-
-        // Генерируем событие об истечении сессии
-        window.dispatchEvent(
-          new CustomEvent("auth:session-expired", {
-            detail: { reason: "invalid_refresh_token" },
-          }),
-        );
-      }
-
-      return false;
+    } catch (error) {
+      logError("Error checking auth status", { error });
+      setUser(null);
+      setIsAuthenticated(false);
+      setAccessTokenExpiresAt(null);
+    } finally {
+      setIsLoading(false);
     }
   };
 
-  // Функция для входа пользователя
-  const login = async (email: string, password: string) => {
-    logInfo(`Login attempt initiated for: ${email}`);
+  // Проверяем состояние аутентификации при загрузке приложения
+  useEffect(() => {
+    checkAuthStatus();
 
+    // Слушаем события истечения сессии
+    const handleSessionExpired = () => {
+      logInfo("Session expired event received");
+      setUser(null);
+      setIsAuthenticated(false);
+      setAccessTokenExpiresAt(null);
+    };
+
+    window.addEventListener("auth:session-expired", handleSessionExpired);
+
+    return () => {
+      window.removeEventListener("auth:session-expired", handleSessionExpired);
+    };
+  }, []);
+
+  // Функция логина
+  const login = async (email: string, password: string) => {
     try {
       setIsLoading(true);
       const response = await authApi.login({ email, password });
+      const { user: userData, access_token_expires_at } = response.data;
 
-      // Получаем и сохраняем данные сессии
-      const session: Session = {
-        session_id: response.data.session_id,
-        access_token: response.data.access_token,
-        refresh_token: response.data.refresh_token,
-        access_token_expires_at: new Date(
-          response.data.access_token_expires_at,
-        ),
-        user: response.data.user,
-      };
+      setUser(userData);
+      setIsAuthenticated(true);
+      setAccessTokenExpiresAt(new Date(access_token_expires_at));
 
-      saveSession(session);
-      setUser(session.user);
-
-      logInfo(`Login successful for: ${email}`);
-      return { success: true };
-    } catch (error: any) {
+      logInfo("User logged in successfully", { email: userData.email });
+      return { success: true }; // Добавляем возвращаемое значение
+    } catch (error) {
+      logError("Login failed", { error });
       const errorMessage =
-        error.response?.data?.error || "Ошибка входа. Проверьте ваши данные.";
-
-      logError(`Login failed for: ${email}`, {
-        errorMessage,
-        status: error.response?.status,
-        details: error.response?.data,
-      });
-
-      return {
-        success: false,
-        error: errorMessage,
-      };
+        error instanceof Error ? error.message : "Login failed";
+      return { success: false, error: errorMessage };
     } finally {
       setIsLoading(false);
     }
   };
 
-  // Функция для выхода пользователя
+  // Функция логаута
   const logout = async () => {
     try {
-      logInfo("Logout initiated");
-      setIsLoading(true);
+      await authApi.logout();
+    } catch (error) {
+      logError("Logout API call failed", { error });
+      // Продолжаем с локальной очисткой даже если API вызов неудачен
+    } finally {
+      // Очищаем локальное состояние
+      setUser(null);
+      setIsAuthenticated(false);
+      setAccessTokenExpiresAt(null);
 
-      // Получаем ID сессии из localStorage для отдельного запроса
-      const sessionId = localStorage.getItem("sessionId");
-      if (!sessionId) {
-        logWarn("No session ID found for logout");
-        clearAuthData();
-        router.push("/auth/login");
-        return true;
-      }
-
-      // Вызываем API для выхода с указанием sessionId
-      await authApi.logout(sessionId);
-      logInfo("Logout API call successful");
-
-      // Очищаем данные локально
-      clearAuthData();
+      logInfo("User logged out successfully");
 
       // Перенаправляем на страницу входа
-      router.push("/auth/login");
-      logInfo("User redirected to login page");
-
-      return true;
-    } catch (error: any) {
-      logError("Logout failed", {
-        error: error.message,
-        status: error.response?.status,
-        details: error.response?.data,
-      });
-
-      toast.error("Ошибка при выходе из системы");
-
-      // Даже при ошибке API очищаем локальные данные
-      // для обеспечения корректного выхода пользователя
-      clearAuthData();
-
-      return false;
-    } finally {
-      setIsLoading(false);
+      window.location.href = "/auth/login";
     }
   };
 
-  // Мемоизируем значение контекста для оптимизации рендеринга
-  const value = useMemo(
-    () => ({
-      user,
-      isAuthenticated: !!user,
-      isLoading,
-      login,
-      logout,
-      refreshToken: () => handleRefreshToken(),
-    }),
-    [user, isLoading],
-  );
+  // Функция обновления токена
+  const refreshToken = async () => {
+    try {
+      const response = await authApi.refreshToken();
+      const { access_token_expires_at } = response.data;
+
+      setAccessTokenExpiresAt(new Date(access_token_expires_at));
+      logInfo("Token refreshed successfully");
+    } catch (error) {
+      logError("Token refresh failed", { error });
+
+      // Если refresh не удался, очищаем состояние
+      setUser(null);
+      setIsAuthenticated(false);
+      setAccessTokenExpiresAt(null);
+
+      throw error;
+    }
+  };
+
+  const value: AuthContextType = {
+    user,
+    isAuthenticated,
+    isLoading,
+    accessTokenExpiresAt,
+    login,
+    logout,
+    refreshToken,
+  };
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 };
 
-export const useAuth = () => useContext(AuthContext);
+export const useAuth = (): AuthContextType => {
+  const context = useContext(AuthContext);
+  if (!context) {
+    throw new Error("useAuth must be used within an AuthProvider");
+  }
+  return context;
+};

@@ -21,6 +21,11 @@ export function MainNav({
       label: "События",
       active: pathName === `/dashboard/events`,
     },
+    {
+      href: `/dashboard/categories`,
+      label: "Категории",
+      active: pathName === `/dashboard/events`,
+    },
   ];
 
   return (

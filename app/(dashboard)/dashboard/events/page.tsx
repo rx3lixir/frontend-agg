@@ -1,6 +1,10 @@
-import { useAdminGuard } from "@/hooks/useAuthGuard";
 import { EventClient } from "./components/client";
 import { EventColumn } from "./components/columns";
+
+interface Category {
+  id: number;
+  name: string;
+}
 
 interface EventApiResponse {
   id: number;
@@ -17,14 +21,18 @@ interface EventApiResponse {
 }
 
 // Вспомогательная функция для преобразования формата данных
-const mapEventResponseToEventColumn = (
+const mapEventsWithCategories = (
   events: EventApiResponse[],
+  categories: Category[],
 ): EventColumn[] => {
+  const categoryMap = new Map<number, string>();
+  categories.forEach((cat) => categoryMap.set(cat.id, cat.name));
+
   return events.map((event) => ({
     id: event.id.toString(),
     name: event.name,
     description: event.description,
-    category: `Категория ${event.category_id}`, // В будущем здесь может быть реальное название категории
+    category: categoryMap.get(event.category_id) || "Неизвестная категория",
     date: event.date,
     time: event.time,
     location: event.location,
@@ -32,23 +40,30 @@ const mapEventResponseToEventColumn = (
     image: event.image,
     source: event.source,
     created_at: event.created_at,
-    updated_at: event.created_at, // В примере нет updated_at, поэтому используем created_at
+    updated_at: event.created_at,
   }));
 };
 
 const EventsPage = async () => {
   // Отправляем GET запрос на API
-  const response = await fetch("http://localhost:8080/event/api/v1/events", {
-    cache: "no-store", // Отключаем кеширование для получения актуальных данных при каждом запросе
-  });
+  const [eventsRes, categoriesRes] = await Promise.all([
+    fetch("http://localhost:8080/event/api/v1/events", { cache: "no-store" }),
+    fetch("http://localhost:8080/event/api/v1/categories"),
+  ]);
 
-  if (!response.ok) {
-    console.error("Ошибка загрузки событий:", response.statusText);
+  if (!eventsRes.ok || !categoriesRes.ok) {
+    console.error(
+      "Ошибка загрузки:",
+      eventsRes.statusText,
+      categoriesRes.statusText,
+    );
     return <div>Ошибка загрузки данных. Попробуйте позже.</div>;
   }
 
-  const eventsData: EventApiResponse[] = await response.json();
-  const formattedEvents = mapEventResponseToEventColumn(eventsData);
+  const eventsData: EventApiResponse[] = await eventsRes.json();
+  const categories: Category[] = await categoriesRes.json();
+
+  const formattedEvents = mapEventsWithCategories(eventsData, categories);
 
   return (
     <div className="flex-col">

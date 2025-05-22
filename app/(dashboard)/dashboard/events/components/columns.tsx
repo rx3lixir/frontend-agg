@@ -3,8 +3,8 @@
 import { ColumnDef } from "@tanstack/react-table";
 import { ArrowUpDown } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { formatDate } from "@/lib/utils";
-import CellAction from "./cell-action";
+//import { formatDate } from "@/lib/utils";
+import CellAction from "./events-cell-action";
 
 export type EventColumn = {
   id: string;

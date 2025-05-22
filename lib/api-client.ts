@@ -7,7 +7,6 @@ import axios, {
 import {
   LoginRequest,
   LoginResponse,
-  RefreshTokenRequest,
   RefreshTokenResponse,
 } from "@/types/auth";
 import { logDebug, logError, logInfo, logWarn } from "@/lib/logger";
@@ -22,42 +21,29 @@ const apiClient: AxiosInstance = axios.create({
   headers: {
     "Content-Type": "application/json",
   },
+  withCredentials: true, // КРИТИЧНО! Включаем отправку cookies
 });
 
-// Функция для получения токена из localStorage (только на клиенте)
-const getAccessToken = (): string | null => {
-  if (typeof window !== "undefined") {
-    return localStorage.getItem("accessToken");
-  }
-  return null;
+// Флаг для отслеживания обновления токена
+let isRefreshing = false;
+// Очередь ожидающих запросов
+let refreshSubscribers: Array<(success: boolean) => void> = [];
+
+// Функция для добавления запроса в очередь ожидания
+const subscribeTokenRefresh = (callback: (success: boolean) => void) => {
+  refreshSubscribers.push(callback);
 };
 
-// Функция для получения ID сессии из localStorage (только на клиенте)
-const getSessionId = (): string | null => {
-  if (typeof window !== "undefined") {
-    return localStorage.getItem("sessionId");
-  }
-  return null;
+// Функция для выполнения всех запросов из очереди
+const onTokenRefreshed = (success: boolean) => {
+  refreshSubscribers.forEach((callback) => callback(success));
+  refreshSubscribers = [];
 };
 
-// Функция для получения refresh токена из localStorage (только на клиенте)
-const getRefreshToken = (): string | null => {
-  if (typeof window !== "undefined") {
-    return localStorage.getItem("refreshToken");
-  }
-  return null;
-};
-
-// Интерсептор для автоматического добавления токена к запросам
+// Интерсептор для запросов - теперь проще, так как токены отправляются через cookies
 apiClient.interceptors.request.use(
   (config) => {
-    const token = getAccessToken();
-    if (token && config.headers) {
-      config.headers["Authorization"] = `Bearer ${token}`;
-      logDebug(`Request to ${config.url} with auth token`);
-    } else {
-      logDebug(`Request to ${config.url} without auth token`);
-    }
+    logDebug(`Request to ${config.url} - token will be sent via cookie`);
     return config;
   },
   (error) => {
@@ -66,23 +52,7 @@ apiClient.interceptors.request.use(
   },
 );
 
-// Флаг для отслеживания выполнения обновления токена
-let isRefreshing = false;
-// Очередь ожидающих запросов
-let refreshSubscribers: Array<(token: string) => void> = [];
-
-// Функция для добавления запроса в очередь ожидания
-const subscribeTokenRefresh = (callback: (token: string) => void) => {
-  refreshSubscribers.push(callback);
-};
-
-// Функция для выполнения всех запросов из очереди
-const onTokenRefreshed = (token: string) => {
-  refreshSubscribers.forEach((callback) => callback(token));
-  refreshSubscribers = [];
-};
-
-// Добавляем интерсептор для обработки ответов и автоматического обновления токена
+// Интерсептор для обработки ответов и автоматического обновления токена
 apiClient.interceptors.response.use(
   (response) => {
     logDebug(`Response from ${response.config.url} successful`, {
@@ -105,7 +75,6 @@ apiClient.interceptors.response.use(
     logWarn(`API error from ${url}`, {
       status,
       errorMessage: error.message,
-      responseData: error.response?.data,
     });
 
     // Проверяем, что ошибка 401 и запрос еще не повторялся
@@ -115,12 +84,13 @@ apiClient.interceptors.response.use(
       // Если уже идет обновление токена, добавляем запрос в очередь
       if (isRefreshing) {
         logInfo("Token refresh already in progress, queuing request");
-        return new Promise((resolve) => {
-          subscribeTokenRefresh((token: string) => {
-            if (originalRequest.headers) {
-              originalRequest.headers["Authorization"] = `Bearer ${token}`;
+        return new Promise((resolve, reject) => {
+          subscribeTokenRefresh((success: boolean) => {
+            if (success) {
+              resolve(apiClient(originalRequest));
+            } else {
+              reject(error);
             }
-            resolve(apiClient(originalRequest));
           });
         });
       }
@@ -129,52 +99,23 @@ apiClient.interceptors.response.use(
       isRefreshing = true;
 
       try {
-        const refreshToken = getRefreshToken();
-        if (!refreshToken) {
-          logError("No refresh token available");
-          throw new Error("No refresh token available");
-        }
-
-        // Пытаемся обновить токен
+        // ИСПРАВЛЕНИЕ: Просто вызываем refresh без передачи токена в теле
+        // Refresh token будет отправлен автоматически через httpOnly cookie
         const response = await axios.post<RefreshTokenResponse>(
           `${API_BASE_URL}/api/v1/auth/refresh`,
-          { refresh_token: refreshToken },
+          {}, // Пустое тело - токен в cookie
+          { withCredentials: true },
         );
 
-        // Получаем access token
-        const accessToken = response.data.access_token;
-        logInfo("Token refreshed successfully");
+        logInfo("Token refreshed successfully via cookies");
 
-        // Сохраняем новый токен
-        if (typeof window !== "undefined") {
-          localStorage.setItem("accessToken", accessToken);
-
-          // Сохраняем время истечения токена
-          if (response.data.access_token_expires_at) {
-            const expiresAt = new Date(
-              response.data.access_token_expires_at,
-            ).getTime();
-            localStorage.setItem("tokenExpiry", expiresAt.toString());
-
-            logDebug("Updated token expiry", {
-              expiresAt: new Date(expiresAt).toISOString(),
-            });
-          }
-        }
-
-        // Обновляем заголовок в оригинальном запросе
-        if (originalRequest.headers) {
-          originalRequest.headers["Authorization"] = `Bearer ${accessToken}`;
-        }
-
-        // Уведомляем ожидающие запросы
-        onTokenRefreshed(accessToken);
+        // Уведомляем ожидающие запросы об успехе
+        onTokenRefreshed(true);
         isRefreshing = false;
 
         logInfo(`Retrying original request to ${url}`);
         return apiClient(originalRequest);
       } catch (refreshError: any) {
-        // Расширенное логирование при ошибке обновления токена
         logError("Failed to refresh token", {
           originalUrl: url,
           errorResponse: refreshError.response?.data,
@@ -183,31 +124,19 @@ apiClient.interceptors.response.use(
 
         // Сбрасываем флаг обновления
         isRefreshing = false;
-        refreshSubscribers = [];
+        onTokenRefreshed(false);
 
-        // Если обновление токена не удалось, выходим из системы
+        // Если обновление токена не удалось
         if (typeof window !== "undefined") {
-          // Очищаем все данные аутентификации
-          localStorage.removeItem("accessToken");
-          localStorage.removeItem("refreshToken");
-          localStorage.removeItem("user");
-          localStorage.removeItem("tokenExpiry");
-          localStorage.removeItem("sessionId");
-
-          logInfo("Auth data cleared due to refresh token failure");
+          logInfo("Refresh token failed, dispatching session expired event");
 
           try {
-            if (
-              typeof window !== "undefined" &&
-              window.hasOwnProperty("dispatchEvent")
-            ) {
-              window.dispatchEvent(
-                new CustomEvent("auth:session-expired", {
-                  detail: { reason: "refresh_failed" },
-                }),
-              );
-              logInfo("Session expired event dispatched");
-            }
+            window.dispatchEvent(
+              new CustomEvent("auth:session-expired", {
+                detail: { reason: "refresh_failed" },
+              }),
+            );
+            logInfo("Session expired event dispatched");
           } catch (e) {
             logError("Failed to dispatch session expired event", { error: e });
           }
@@ -230,10 +159,10 @@ export const authApi = {
     logInfo(`Login attempt for user: ${data.email}`);
 
     try {
-      // Используем правильный эндпоинт из роутера бэкенда
       const response = await apiClient.post<LoginResponse>(
         `/api/v1/auth/login`,
         data,
+        { withCredentials: true }, // Получаем httpOnly cookies от сервера
       );
 
       logInfo(`Login successful for user: ${data.email}`);
@@ -249,26 +178,18 @@ export const authApi = {
     }
   },
 
-  // Пользователь разлогнинивается
-  logout: async (sessionId?: string): Promise<AxiosResponse<void>> => {
+  // Пользователь разлогнивается
+  logout: async (): Promise<AxiosResponse<void>> => {
     logInfo("Logout attempt");
 
     try {
-      // Используем ID сессии из параметра или из localStorage
-      const sid = sessionId || getSessionId();
-
-      if (!sid) {
-        throw new Error("No session ID available for logout");
-      }
-
-      // Создаем параметры запроса с ID сессии
-      const requestBody = { session_id: sid };
-      logInfo(`Sending logout request with session ID: ${sid}`);
-
+      // Session ID будет отправлен автоматически через httpOnly cookie
       const response = await apiClient.post<void>(
         `/api/v1/auth/logout`,
-        requestBody,
+        {}, // Пустое тело - все данные в cookies
+        { withCredentials: true },
       );
+
       logInfo("Logout successful");
       return response;
     } catch (error: any) {
@@ -282,15 +203,15 @@ export const authApi = {
   },
 
   // Обновление токена
-  refreshToken: async (
-    data: RefreshTokenRequest,
-  ): Promise<AxiosResponse<RefreshTokenResponse>> => {
+  refreshToken: async (): Promise<AxiosResponse<RefreshTokenResponse>> => {
     logInfo("Manual token refresh attempt");
 
     try {
+      // Refresh token будет отправлен автоматически через httpOnly cookie
       const response = await apiClient.post<RefreshTokenResponse>(
         `/api/v1/auth/refresh`,
-        data,
+        {}, // Пустое тело - refresh_token в cookie
+        { withCredentials: true },
       );
 
       logInfo("Manual token refresh successful");
@@ -305,11 +226,16 @@ export const authApi = {
     }
   },
 
+  // Отзыв токена
   revokeToken: async (): Promise<AxiosResponse<void>> => {
     logInfo("Token revocation attempt");
 
     try {
-      const response = await apiClient.post<void>(`/api/v1/auth/revoke`);
+      const response = await apiClient.post<void>(
+        `/api/v1/auth/revoke`,
+        {},
+        { withCredentials: true },
+      );
       logInfo("Token revocation successful");
       return response;
     } catch (error: any) {

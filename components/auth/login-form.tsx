@@ -37,21 +37,17 @@ const LoginForm = () => {
   const onSubmit = async (data: z.infer<typeof LoginSchema>) => {
     try {
       setLoading(true);
+      const { success, error } = await login(data.email, data.password);
 
-      const response = await login(data.email, data.password);
-
-      if (response.success) {
+      if (success) {
         toast.success("Вы вошли в систему");
-        // Перенаправляем с задержкой для лучшего UX
-        setTimeout(() => {
-          router.push("/");
-        }, 1500);
-      } else {
-        toast.error(response.error || "Ошибка входа");
+        setTimeout(() => router.push("/"), 1000);
+      } else if (error) {
+        toast.error(error || "Ошибка входа");
       }
     } catch (error) {
       console.error("Ошибка входа:", error);
-      toast.error("Проверьте введенные данные и попробуйте снова");
+      toast.error("Произошла непредвиденная ошибка");
     } finally {
       setLoading(false);
     }

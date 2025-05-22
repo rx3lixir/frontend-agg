@@ -7,6 +7,7 @@ import { DataTable } from "@/components/ui/data-table";
 import { Separator } from "@/components/ui/separator";
 import { Plus } from "lucide-react";
 import { Heading } from "@/components/heading";
+import { ApiList } from "@/components/ui/api-list";
 
 interface EventClientProps {
   data: EventColumn[];
@@ -30,6 +31,7 @@ export const EventClient: React.FC<EventClientProps> = ({ data }) => {
       <DataTable columns={columns} data={data} />
       <Heading title="API" description="API запросы для событий на бэкенд" />
       <Separator />
+      <ApiList entityName="events" entityIdName="{eventId}" />
     </>
   );
 };

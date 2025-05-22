@@ -82,7 +82,6 @@ interface EventFormProps {
 
 export const EventForm: React.FC<EventFormProps> = ({ initialData }) => {
   const router = useRouter();
-  const params = useParams();
 
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -144,14 +143,9 @@ export const EventForm: React.FC<EventFormProps> = ({ initialData }) => {
     try {
       setLoading(true);
 
-      // Достаем токен
-      const accessToken = localStorage.getItem("accessToken");
-
       // Создаем конфигурацию для axios с заголовком авторизации
       const config = {
-        headers: {
-          Authorization: `Bearer ${accessToken}`,
-        },
+        withCredentials: true,
       };
 
       if (initialData) {
@@ -169,7 +163,7 @@ export const EventForm: React.FC<EventFormProps> = ({ initialData }) => {
       }
 
       router.refresh();
-      router.push(`dashboard/events`);
+      router.push(`/dashboard/events`);
       toast.success(toastMessage);
     } catch (error: any) {
       toast.error(
@@ -186,14 +180,9 @@ export const EventForm: React.FC<EventFormProps> = ({ initialData }) => {
     try {
       setLoading(true);
 
-      // Достаем токен
-      const accessToken = localStorage.getItem("accessToken");
-
       // Создаем конфигурацию для axios с заголовком авторизации
       const config = {
-        headers: {
-          Authorization: `Bearer ${accessToken}`,
-        },
+        withCredentials: true,
       };
 
       if (!initialData?.id) {
@@ -206,9 +195,9 @@ export const EventForm: React.FC<EventFormProps> = ({ initialData }) => {
       );
 
       router.refresh();
-      router.push(`/events`);
+      router.push(`/dashboard/events`);
 
-      toast.success("Событие удалено");
+      toast.success(`Cобытие удалено`);
     } catch (error) {
       toast.error("Не удалось удалить событие");
     } finally {

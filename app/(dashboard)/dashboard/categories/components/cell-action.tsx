@@ -1,5 +1,6 @@
 "use client";
 
+import axios from "axios";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -7,40 +8,35 @@ import {
   DropdownMenuTrigger,
   DropdownMenuItem,
 } from "@/components/ui/dropdown-menu";
-import { EventColumn } from "./columns";
 import { Button } from "@/components/ui/button";
 import { Copy, Edit, MoreHorizontal, Trash } from "lucide-react";
 import { toast } from "sonner";
 import { useRouter } from "next/navigation";
-import axios from "axios";
 import { useState } from "react";
 import { AlertModal } from "@/components/modals/alert-modal";
+import { CategoryColumn } from "./columns";
 
-interface CellActionProps {
-  data: EventColumn;
+interface CategoryActionProps {
+  data: CategoryColumn;
 }
 
-const CellAction: React.FC<CellActionProps> = ({ data }) => {
+const CellAction: React.FC<CategoryActionProps> = ({ data }) => {
   const router = useRouter();
   const [loading, setLoading] = useState(false);
   const [open, setOpen] = useState(false);
 
   const onCopy = (name: string) => {
     navigator.clipboard.writeText(name);
-    toast.success("Название события скопировано");
+    toast.success("Название категории скопировано");
   };
 
   const onDelete = async () => {
     try {
       setLoading(true);
-      const accessToken = localStorage.getItem("accessToken");
-
       await axios.delete(
-        `http://localhost:8080/event/api/v1/events/${data.id}`,
+        `http://localhost:8080/event/api/v1/categories/${data.id}`,
         {
-          headers: {
-            Authorization: `Bearer ${accessToken}`,
-          },
+          withCredentials: true,
         },
       );
 
@@ -72,7 +68,7 @@ const CellAction: React.FC<CellActionProps> = ({ data }) => {
         <DropdownMenuContent align="end">
           <DropdownMenuLabel>Действия</DropdownMenuLabel>
           <DropdownMenuItem
-            onClick={() => router.push(`/dashboard/events/${data.id}/edit`)}
+            onClick={() => router.push(`/dashboard/categories/${data.id}/edit`)}
           >
             <Edit className="h-4 w-4" />
             Редактировать
