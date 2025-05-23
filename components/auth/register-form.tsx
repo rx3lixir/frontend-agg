@@ -86,7 +86,7 @@ const RegisterForm = () => {
       // Перенаправляем с задержкой для лучшего UX
       setTimeout(() => {
         router.push("/auth/login?registered=true");
-      }, 1500);
+      }, 800);
     } catch (error) {
       console.error("Ошибка при регистрации:", error);
 

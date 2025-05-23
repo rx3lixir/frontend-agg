@@ -24,7 +24,7 @@ export function MainNav({
     {
       href: `/dashboard/categories`,
       label: "Категории",
-      active: pathName === `/dashboard/events`,
+      active: pathName === `/dashboard/categories`,
     },
   ];
 

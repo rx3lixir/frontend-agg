@@ -2,6 +2,7 @@ import { MainNav } from "@/components/main-nav";
 import DashboardSwitcher from "@/components/dashboard-switcher";
 import { Avatar, AvatarFallback } from "./ui/avatar";
 import { User } from "lucide-react";
+import { ModeToggle } from "./theme-toggle";
 
 const Navbar = () => {
   const dashboards = [
@@ -16,6 +17,7 @@ const Navbar = () => {
         <DashboardSwitcher items={dashboards} />
         <MainNav className="mx-6" />
         <div className="ml-auto flex items-center space-x-4">
+          <ModeToggle />
           <Avatar>
             <AvatarFallback>
               <User />
