@@ -10,8 +10,7 @@ export function Providers({ children }: { children: React.ReactNode }) {
     <AuthProvider>
       <NextThemesProvider
         attribute="class"
-        defaultTheme="dark"
-        enableSystem
+        defaultTheme="light"
         disableTransitionOnChange
       >
         <Toaster position="bottom-right" />
